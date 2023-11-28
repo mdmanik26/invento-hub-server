@@ -1,5 +1,6 @@
 const express = require('express');
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const jwt = require('jsonwebtoken')
 require('dotenv').config()
 const app = express()
 const cors = require('cors');
@@ -30,9 +31,94 @@ async function run() {
         const userCollection = client.db("inventoDB").collection("users");
         const shopCollection = client.db("inventoDB").collection("shops");
 
+
+       // middlewares
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email
+            const query = { email: email }
+            const user = await userCollection.findOne(query)
+            const isAdmin = user?.role === 'admin'
+            if (!isAdmin) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next();
+        }
+
+        const verifyManager = async (req, res, next) => {
+            const email = req.decoded.email
+            const query = { email: email }
+            const user = await userCollection.findOne(query)
+            const isManager = user?.role === 'manager'
+            if (!isManager) {
+                return res.status(403).send({ message: 'forbidden access' })
+            }
+            next();
+        }
+
+        const verifyToken = async (req, res, next) => {
+            console.log('inside verify token', req.headers)
+            if (!req.headers.authorization) {
+                return res.status(401).send({ message: 'unauthorized access' })
+            }
+            const token = req.headers.authorization.split(' ')[1]
+            jwt.verify(token, process.env.JSON_SECRET_KEY, (err, decoded) => {
+                if (err) {
+                    return res.status(401).send({ message: 'unauthorized access' })
+                }
+                req.decoded = decoded
+                next()
+            })
+
+        }
+
+
+        // middlewares
+
+
+        app.get('/users/admin/:email', verifyToken, async (req, res) => {
+            const email = req.params.email
+            console.log(email)
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+
+            }
+            const query = { email: email }
+            const user = await userCollection.findOne(query)
+            let admin = false
+            if (user) {
+                admin = user?.role === 'admin'
+            }
+            res.send({ admin })
+
+        })
+
+        app.get('/users/manager/:email', verifyToken, async (req, res) => {
+            const email = req.params.email
+            console.log(email)
+            if (email !== req.decoded.email) {
+                return res.status(403).send({ message: 'forbidden access' })
+
+            }
+            const query = { email: email }
+            const user = await userCollection.findOne(query)
+            let manager = false
+            if (user) {
+                manager = user?.role === 'manager'
+            }
+            res.send({ manager })
+
+        })
+
+        app.post('/jwt', async (req, res) => {
+            const user = req.body
+            const token = jwt.sign(user, process.env.JSON_SECRET_KEY, { expiresIn: '1h' })
+            res.send({ token })
+        })
+
+
+
         app.post('/users', async (req, res) => {
             const user = req.body
-
             const query = { email: user.email }
             const existingUser = await userCollection.findOne(query)
             if (existingUser) {
@@ -43,15 +129,11 @@ async function run() {
         })
 
 
-        app.get('/users/:email', async (req, res) => {
-            const email = req.params.email
-            console.log(email)
-            const query = { email: email }
-            const user = await userCollection.findOne(query)
-            res.send(user)
+        // all users
+        app.get('/users', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await userCollection.find().toArray()
+            res.send(result)
         })
-
-
 
         app.post('/shops', async (req, res) => {
             const shop = req.body
