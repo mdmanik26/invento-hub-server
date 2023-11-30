@@ -1,9 +1,11 @@
 const express = require('express');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require('jsonwebtoken')
+
 require('dotenv').config()
 const app = express()
 const cors = require('cors');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const port = process.env.PORT || 5000
 
 app.use(cors())
@@ -27,12 +29,16 @@ const client = new MongoClient(uri, {
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
+
+
         const userCollection = client.db("inventoDB").collection("users");
         const shopCollection = client.db("inventoDB").collection("shops");
-
-
-       // middlewares
+        const productCollection = client.db("inventoDB").collection("products");
+        const cartCollection = client.db("inventoDB").collection("carts");
+        const salesCollection = client.db("inventoDB").collection("sales");
+        const subsCollection = client.db("inventoDB").collection("subscription");
+        // middlewares
         const verifyAdmin = async (req, res, next) => {
             const email = req.decoded.email
             const query = { email: email }
@@ -56,7 +62,7 @@ async function run() {
         }
 
         const verifyToken = async (req, res, next) => {
-            console.log('inside verify token', req.headers)
+            // console.log('inside verify token', req.headers)
             if (!req.headers.authorization) {
                 return res.status(401).send({ message: 'unauthorized access' })
             }
@@ -77,7 +83,7 @@ async function run() {
 
         app.get('/users/admin/:email', verifyToken, async (req, res) => {
             const email = req.params.email
-            console.log(email)
+            // console.log(email)
             if (email !== req.decoded.email) {
                 return res.status(403).send({ message: 'forbidden access' })
 
@@ -94,7 +100,7 @@ async function run() {
 
         app.get('/users/manager/:email', verifyToken, async (req, res) => {
             const email = req.params.email
-            console.log(email)
+            // console.log(email)
             if (email !== req.decoded.email) {
                 return res.status(403).send({ message: 'forbidden access' })
 
@@ -109,10 +115,66 @@ async function run() {
 
         })
 
+
+
         app.post('/jwt', async (req, res) => {
             const user = req.body
             const token = jwt.sign(user, process.env.JSON_SECRET_KEY, { expiresIn: '1h' })
             res.send({ token })
+        })
+
+
+
+
+        // carts
+        app.post('/carts', verifyToken, verifyManager, async (req, res) => {
+            const product = req.body
+            // console.log(product)
+            const result = await cartCollection.insertOne(product)
+            res.send(result)
+        })
+
+
+        app.get('/carts/:email', verifyToken, verifyManager, async (req, res) => {
+            const email = req.params.email
+            // console.log(email)
+            const query = { email: email }
+            const result = await cartCollection.find(query).toArray()
+            res.send(result)
+        })
+
+        app.delete('/carts/:email', verifyToken, verifyManager, async (req, res) => {
+            const email = req.params.email
+            console.log(email)
+            const query = { email: email }
+            const result = await cartCollection.deleteMany(query)
+            res.send(result)
+        })
+
+
+
+
+        // sale
+
+        app.post('/sales', async (req, res) => {
+            const items = req.body
+            // console.log(items);
+            const result = await salesCollection.insertMany(items)
+            res.send(result)
+        })
+
+
+        app.get('/sales/:email', verifyToken, verifyManager, async (req, res) => {
+            const email = req.params.email
+            console.log(email)
+            const query = { email: email }
+            const result = await salesCollection.find(query).toArray()
+            res.send(result)
+        })
+
+        app.get('/sales', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await salesCollection.find().toArray()
+            res.send(result)
         })
 
 
@@ -135,6 +197,15 @@ async function run() {
             res.send(result)
         })
 
+        app.get('/users/:email', async (req, res) => {
+            const email = req.params.email
+            // console.log(email)
+            const query = { email: email }
+            // console.log(query)
+            const shop = await userCollection.findOne(query)
+            res.send(shop)
+        })
+
         app.post('/shops', async (req, res) => {
             const shop = req.body
             // console.log(shop);
@@ -153,13 +224,121 @@ async function run() {
         app.patch('/users/manager/:email', async (req, res) => {
             const email = req.params.email
             const filter = { email: email }
-            console.log(filter)
+            // console.log(filter)
             const updatedDoc = {
                 $set: {
                     role: 'manager'
                 }
             }
             const result = await userCollection.updateOne(filter, updatedDoc)
+            res.send(result)
+        })
+
+
+
+        // subscription and payment
+
+        app.get('/subscription', async (req, res) => {
+            const result = await subsCollection.find().toArray()
+            res.send(result)
+        })
+
+
+        app.get('/subscription/:id', async (req, res) => {
+            const id = req.params.id
+            console.log(id);
+            const query = { _id: new ObjectId(id) }
+            const result = await subsCollection.findOne(query)
+            res.send(result)
+        })
+
+
+
+
+
+
+
+
+        // shops
+
+        app.get('/shops', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await shopCollection.find().toArray()
+            res.send(result)
+        })
+
+        app.get('/shops/:email', verifyToken, async (req, res) => {
+            const email = req.params.email
+            // console.log(email)
+            const query = { ownerEmail: email }
+            // console.log(query)
+            const shop = await shopCollection.findOne(query)
+            res.send(shop)
+        })
+
+
+        app.post('/products', verifyToken, verifyManager, async (req, res) => {
+            const product = req.body
+            // console.log(product)
+            const result = await productCollection.insertOne(product)
+            res.send(result)
+        })
+
+
+        app.get('/products/:email', verifyToken, verifyManager, async (req, res) => {
+            const email = req.params.email
+            // console.log(email)
+            const query = { userEmail: email }
+            // console.log(query);
+            const result = await productCollection.find(query).toArray()
+            res.send(result)
+        })
+
+        app.get('/product/:id', async (req, res) => {
+            const id = req.params.id
+            const query = { _id: new ObjectId(id) }
+            const result = await productCollection.findOne(query)
+            res.send(result)
+        })
+
+        app.get('/products', verifyToken, verifyAdmin, async (req, res) => {
+            const result = await productCollection.find().toArray()
+            res.send(result)
+        })
+
+
+        app.put('/product/:id', verifyToken, verifyManager, async (req, res) => {
+            const id = req.params.id;
+            // console.log(id)
+            const updatedProduct = req.body;
+            // console.log(updatedProduct)
+            const filter = { _id: new ObjectId(id) };
+            const options = { upsert: true };
+
+            const update = {
+                $set: {
+                    productName: updatedProduct.productName,
+                    image: updatedProduct.image,
+                    productQuantity: updatedProduct.productQuantity,
+                    productLocation: updatedProduct.productLocation,
+                    productionCost: updatedProduct.productionCost,
+                    profitMargin: updatedProduct.profitMargin,
+                    discount: updatedProduct.discount,
+                    description: updatedProduct.description
+                }
+            }
+            const result = await productCollection.updateOne(filter, update, options);
+            res.send(result)
+
+        })
+
+
+
+
+        app.delete('/products/:id', verifyToken, verifyManager, async (req, res) => {
+            const id = req.params.id
+            // console.log(id);
+            const query = { _id: new ObjectId(id) }
+            const result = await productCollection.deleteOne(query)
             res.send(result)
         })
 
@@ -172,8 +351,8 @@ async function run() {
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
